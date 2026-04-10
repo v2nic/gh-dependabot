@@ -1,80 +1,64 @@
 package main
 
 import (
-	"log"
-	"net/http"
-	"sort"
-
-	tea "github.com/charmbracelet/bubbletea"
-	depcmds "github.com/einride/gh-dependabot/cmd"
-	"github.com/einride/gh-dependabot/internal/gh"
-	"github.com/shurcooL/githubv4"
+	"github.com/einride/gh-dependabot/pkg/submit"
+	"github.com/einride/gh-dependabot/pkg/trigger"
 	"github.com/spf13/cobra"
 )
 
 func main() {
-	log.SetFlags(0)
-	client := githubv4.NewClient(&http.Client{
-		Transport: gh.NewGraphQLRoundTripper(),
-	})
-	var org string
-	var team string
-	var securityFilter bool
-	cmd := cobra.Command{
-		Use:     "gh dependabot",
-		Short:   "Manage Dependabot PRs.",
-		Example: "gh dependabot --org einride",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			log.Println("Resolving current user...")
-			username, err := gh.Run("api", "graphql", "-f", "query={viewer{login}}", "--jq", ".data.viewer.login")
-			if err != nil {
-				return err
-			}
-			query := pullRequestQuery{
-				username: username,
-				org:      org,
-				team:     team,
-			}
-			log.Printf("Searching \"%s\"...", query.SearchQuery())
-			page, err := loadPullRequestPage(client, query)
-			if err != nil {
-				return err
-			}
-			pullRequests := page.PullRequests
-			for page.HasNextPage {
-				log.Printf("Searching \"%s\"... (%d/%d)", query.SearchQuery(), len(pullRequests), page.TotalCount)
-				nextPage, err := loadPullRequestPage(client, pullRequestQuery{
-					username: username,
-					org:      org,
-					team:     team,
-					cursor:   page.EndCursor,
-				})
-				if err != nil {
-					return err
-				}
-				pullRequests = append(pullRequests, nextPage.PullRequests...)
-				page = nextPage
-			}
-			if securityFilter {
-				log.Printf("Matching pull requests to security alerts...")
-				pullRequests, err = filterSecurityPullRequests(cmd.Context(), client, &pullRequests)
-				if err != nil {
-					return err
-				}
-			}
-			sort.Slice(pullRequests, func(i, j int) bool {
-				return pullRequests[i].updatedAt.Before(pullRequests[j].updatedAt)
-			})
-			_, err = tea.NewProgram(newApp(client, query, pullRequests), tea.WithAltScreen()).Run()
-			return err
+	rootCmd := &cobra.Command{
+		Use:   "gh-dependabot",
+		Short: "Manage Dependabot PRs",
+		Long: `Manage Dependabot PRs.
+
+Examples:
+  gh dependabot --org einride`,
+	}
+
+	var onlySecurity bool
+	var org, team string
+
+	rootCmd.Flags().BoolVarP(&onlySecurity, "only-security", "s", false, "show only pull requests that relate to security alerts")
+	rootCmd.Flags().StringVarP(&org, "org", "o", "", "organization to query (e.g. einride)")
+	rootCmd.Flags().StringVarP(&team, "team", "t", "", "team to query (e.g. einride/team-transport-execution)")
+
+	// submit command
+	submitCmd := &cobra.Command{
+		Use:   "submit",
+		Short: "Submit dependencies to trigger Dependabot security updates",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, _ := cmd.Flags().GetString("repo")
+			lockfile, _ := cmd.Flags().GetString("lockfile")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			return submit.Run(repo, lockfile, dryRun)
 		},
 	}
-	cmd.AddCommand(depcmds.SubmitCmd(), depcmds.TriggerCmd())
-	cmd.Flags().StringVarP(&org, "org", "o", "", "organization to query (e.g. einride)")
-	cmd.Flags().StringVarP(&team, "team", "t", "", "team to query (e.g. einride/team-transport-execution)")
-	cmd.Flags().
-		BoolVarP(&securityFilter, "only-security", "s", false, "show only pull requests that relate to security alerts")
-	if err := cmd.Execute(); err != nil {
-		log.Fatalln(err)
+	submitCmd.Flags().StringP("repo", "r", "", "repository (owner/repo)")
+	submitCmd.Flags().StringP("lockfile", "f", "", "path to lockfile (auto-detected if not specified)")
+	submitCmd.Flags().Bool("dry-run", false, "preview what would be submitted without making API calls")
+	rootCmd.AddCommand(submitCmd)
+
+	// trigger command
+	triggerCmd := &cobra.Command{
+		Use:     "trigger",
+		Aliases: []string{"t"},
+		Short:   "Trigger Dependabot scans on repositories",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, _ := cmd.Flags().GetString("repo")
+			orgFlag, _ := cmd.Flags().GetString("org")
+			all, _ := cmd.Flags().GetBool("all")
+			return trigger.Run(repo, orgFlag, all)
+		},
 	}
+	triggerCmd.Flags().StringP("repo", "r", "", "single repository (owner/repo)")
+	triggerCmd.Flags().StringP("org", "o", "", "all repositories in an organization")
+	triggerCmd.Flags().Bool("all", false, "trigger for all accessible repositories")
+	rootCmd.AddCommand(triggerCmd)
+
+	_ = onlySecurity
+	_ = org
+	_ = team
+
+	rootCmd.Execute()
 }

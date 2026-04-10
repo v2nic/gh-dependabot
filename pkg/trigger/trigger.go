@@ -1,66 +1,53 @@
-package cmd
+package trigger
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/einride/gh-dependabot/internal/gh"
-	"github.com/spf13/cobra"
 )
 
-func TriggerCmd() *cobra.Command {
-	var repo string
-	var org string
-	var all bool
+const detectorName = "gh-dependabot-trigger"
+const detectorVersion = "1.0.0"
+const detectorURL = "https://github.com/v2nic/gh-dependabot"
 
-	cmd := &cobra.Command{
-		Use:     "trigger",
-		Short:   "Trigger Dependabot scans on repositories",
-		Aliases: []string{"t"},
-		Long: `Trigger Dependabot to scan repositories for security vulnerabilities.
-
-This uses the dependency-graph/snapshots API to submit current dependencies,
-which triggers Dependabot to check for known vulnerabilities and create
-security update PRs if needed.
-
-Example:
-  gh dependabot trigger --repo owner/repo
-  gh dependabot trigger --org myorg
-  gh dependabot trigger --all`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			repos, err := resolveRepos(repo, org, all)
-			if err != nil {
-				return err
-			}
-
-			if len(repos) == 0 {
-				return fmt.Errorf("no repositories specified")
-			}
-
-			for _, r := range repos {
-				log.Printf("Triggering scan for %s...", r)
-				if err := triggerRepo(r); err != nil {
-					log.Printf("  Error: %v", err)
-					continue
-				}
-				log.Printf("  Success!")
-			}
-
-			return nil
-		},
+// Run triggers Dependabot scans on the specified repositories
+func Run(repoFlag, orgFlag string, allFlag bool) error {
+	repos, err := resolveRepos(repoFlag, orgFlag, allFlag)
+	if err != nil {
+		return err
 	}
 
-	cmd.Flags().StringVarP(&repo, "repo", "r", "", "single repository (owner/repo)")
-	cmd.Flags().StringVarP(&org, "org", "o", "", "all repositories in an organization")
-	cmd.Flags().BoolVar(&all, "all", false, "trigger for all accessible repositories")
+	if len(repos) == 0 {
+		return fmt.Errorf("no repositories specified")
+	}
 
-	return cmd
+	for _, r := range repos {
+		if err := triggerRepo(r); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
+
+// ResolveRepos determines which repos to target
+func ResolveRepos(repoFlag, orgFlag string, allFlag bool) ([]string, error) {
+	return resolveRepos(repoFlag, orgFlag, allFlag)
+}
+
+// GetRepoState fetches default branch and SHA for a repo
+func GetRepoState(owner, name string) (branch, sha string, err error) {
+	return getRepoState(owner, name)
+}
+
+// =============================================================================
+// Internal helpers
+// =============================================================================
 
 func resolveRepos(repoFlag, orgFlag string, allFlag bool) ([]string, error) {
 	if repoFlag != "" {
@@ -129,9 +116,9 @@ func triggerRepo(repo string) error {
 			"id":         fmt.Sprintf("%d", os.Getpid()),
 		},
 		"detector": map[string]string{
-			"name":    "gh-dependabot-trigger",
-			"version": "1.0.0",
-			"url":     "https://github.com/v2nic/gh-dependabot",
+			"name":    detectorName,
+			"version": detectorVersion,
+			"url":     detectorURL,
 		},
 		"scanned": "2026-04-08T12:00:00Z",
 		"manifests": map[string]interface{}{
@@ -163,4 +150,33 @@ func triggerRepo(repo string) error {
 	}
 
 	return nil
+}
+
+func getRepoState(owner, name string) (branch, sha string, err error) {
+	// Get default branch
+	output, err := gh.Run("api",
+		fmt.Sprintf("repos/%s/%s", owner, name),
+		"-q", "{defaultBranch: .default_branch}",
+	)
+	if err != nil {
+		return "main", "", fmt.Errorf("get repo state: %w", err)
+	}
+
+	var info struct {
+		DefaultBranch string `json:"defaultBranch"`
+	}
+	if err := json.Unmarshal([]byte(output), &info); err != nil {
+		return "main", "", err
+	}
+
+	// Get the actual commit SHA from the branch
+	shaOutput, err := gh.Run("api",
+		fmt.Sprintf("repos/%s/%s/git/ref/heads/%s", owner, name, info.DefaultBranch),
+		"-q", ".object.sha",
+	)
+	if err != nil {
+		return info.DefaultBranch, "", err
+	}
+
+	return info.DefaultBranch, strings.TrimSpace(shaOutput), nil
 }
