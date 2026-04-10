@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/einride/gh-dependabot/cmd"
+	depcmds "github.com/einride/gh-dependabot/cmd"
 	"github.com/einride/gh-dependabot/internal/gh"
 	"github.com/shurcooL/githubv4"
 	"github.com/spf13/cobra"
@@ -20,11 +20,11 @@ func main() {
 	var org string
 	var team string
 	var securityFilter bool
-	c := cobra.Command{
+	cmd := cobra.Command{
 		Use:     "gh dependabot",
 		Short:   "Manage Dependabot PRs.",
 		Example: "gh dependabot --org einride",
-		RunE: func(c *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			log.Println("Resolving current user...")
 			username, err := gh.Run("api", "graphql", "-f", "query={viewer{login}}", "--jq", ".data.viewer.login")
 			if err != nil {
@@ -57,7 +57,7 @@ func main() {
 			}
 			if securityFilter {
 				log.Printf("Matching pull requests to security alerts...")
-				pullRequests, err = filterSecurityPullRequests(c.Context(), client, &pullRequests)
+				pullRequests, err = filterSecurityPullRequests(cmd.Context(), client, &pullRequests)
 				if err != nil {
 					return err
 				}
@@ -69,12 +69,12 @@ func main() {
 			return err
 		},
 	}
-	c.AddCommand(cmd.SubmitCmd(), cmd.TriggerCmd())
-	c.Flags().StringVarP(&org, "org", "o", "", "organization to query (e.g. einride)")
-	c.Flags().StringVarP(&team, "team", "t", "", "team to query (e.g. einride/team-transport-execution)")
-	c.Flags().
+	cmd.AddCommand(depcmds.SubmitCmd(), depcmds.TriggerCmd())
+	cmd.Flags().StringVarP(&org, "org", "o", "", "organization to query (e.g. einride)")
+	cmd.Flags().StringVarP(&team, "team", "t", "", "team to query (e.g. einride/team-transport-execution)")
+	cmd.Flags().
 		BoolVarP(&securityFilter, "only-security", "s", false, "show only pull requests that relate to security alerts")
-	if err := c.Execute(); err != nil {
+	if err := cmd.Execute(); err != nil {
 		log.Fatalln(err)
 	}
 }

@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -49,19 +51,9 @@ Example:
 			}
 
 			// Parse lockfile
-			deps, err := parser.ParseLockfile(lockfilePath)
+			parsedDeps, err := parser.ParseLockfile(lockfilePath)
 			if err != nil {
 				return fmt.Errorf("parse lockfile: %w", err)
-			}
-
-			// Convert to submitter format
-			parsedDeps := make(map[string]submitter.Dependency)
-			for key, dep := range deps {
-				parsedDeps[key] = submitter.Dependency{
-					PackageURL:   dep.PackageURL,
-					Relationship: dep.Relationship,
-					Scope:        dep.Scope,
-				}
 			}
 
 			log.Printf("Found %d dependencies", len(parsedDeps))
@@ -74,27 +66,27 @@ Example:
 				return nil
 			}
 
-			// Get current commit SHA
-			sha, err := gh.Run("rev-parse", "HEAD")
-			if err != nil {
-				// Fallback to get from remote
-				sha = "0000000000000000000000000000000000000000"
+			// Convert to submitter format
+			deps := make(map[string]submitter.Dependency, len(parsedDeps))
+			for k, v := range parsedDeps {
+				deps[k] = submitter.Dependency{
+					PackageURL:   v.PackageURL,
+					Relationship: v.Relationship,
+					Scope:        v.Scope,
+				}
 			}
 
-			// Get default branch
-			branch, err := gh.Run("branch", "--show-current")
+			// Get default branch and commit SHA from GitHub API
+			defaultBranch, sha, err := getRepoState(owner, repoName)
 			if err != nil {
-				branch = "main"
-			}
-			if branch == "" {
-				branch = "main"
+				return fmt.Errorf("get repo state: %w", err)
 			}
 
 			// Build snapshot
 			snapshot := submitter.Snapshot{
 				Version: 0,
 				SHA:     sha,
-				Ref:     "refs/heads/" + branch,
+				Ref:     "refs/heads/" + defaultBranch,
 				Job: submitter.Job{
 					Correlator: fmt.Sprintf("gh-dependabot-submit-%d", time.Now().Unix()),
 					ID:         fmt.Sprintf("%d", os.Getpid()),
@@ -111,21 +103,27 @@ Example:
 						File: submitter.File{
 							SourceLocation: lockfilePath,
 						},
-						Resolved: parsedDeps,
+						Resolved: deps,
 					},
 				},
 			}
 
-			// Submit to API
+			// Submit to API using --input for proper JSON handling
 			log.Printf("Submitting to %s/%s...", owner, repoName)
-			payload, _ := json.Marshal(snapshot)
-			output, err := gh.Run("api", "-X", "POST",
-				fmt.Sprintf("repos/%s/%s/dependency-graph/snapshots", owner, repoName),
-				"-H", "Accept: application/vnd.github+json",
-				"-f", fmt.Sprintf("snapshot=%s", string(payload)),
-			)
+			payload, err := json.Marshal(snapshot)
 			if err != nil {
-				return fmt.Errorf("submit: %w\n%s", err, output)
+				return fmt.Errorf("marshal snapshot: %w", err)
+			}
+
+			apiCmd := exec.Command("gh", "api", "-X", "POST",
+				fmt.Sprintf("repos/%s/%s/dependency-graph/snapshots", owner, repoName),
+				"--input", "-",
+			)
+			apiCmd.Stdin = bytes.NewReader(payload)
+
+			output, err := apiCmd.CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("submit: %w\n%s", err, string(output))
 			}
 
 			fmt.Println("Successfully submitted dependencies!")
@@ -143,7 +141,6 @@ Example:
 
 func resolveRepo(repoFlag string) (owner, name string, err error) {
 	if repoFlag != "" {
-		// Parse owner/repo
 		parts := strings.SplitN(repoFlag, "/", 2)
 		if len(parts) != 2 {
 			return "", "", fmt.Errorf("invalid repo format: %s (expected owner/repo)", repoFlag)
@@ -168,6 +165,37 @@ func resolveRepo(repoFlag string) (owner, name string, err error) {
 	return repoInfo.Owner, repoInfo.Name, nil
 }
 
+func getRepoState(owner, name string) (branch, sha string, err error) {
+	// Get default branch and latest commit SHA from API
+	output, err := gh.Run("api",
+		fmt.Sprintf("repos/%s/%s", owner, name),
+		"-q", "{defaultBranch: .default_branch, sha: .default_branch}",
+	)
+	if err != nil {
+		// Fallback to main branch
+		return "main", "", fmt.Errorf("get repo state: %w", err)
+	}
+
+	var info struct {
+		DefaultBranch string `json:"defaultBranch"`
+		SHA            string `json:"sha"`
+	}
+	if err := json.Unmarshal([]byte(output), &info); err != nil {
+		return "main", "", err
+	}
+
+	// Get the actual commit SHA from the branch
+	shaOutput, err := gh.Run("api",
+		fmt.Sprintf("repos/%s/%s/git/ref/heads/%s", owner, name, info.DefaultBranch),
+		"-q", ".object.sha",
+	)
+	if err != nil {
+		return info.DefaultBranch, "", err
+	}
+
+	return info.DefaultBranch, strings.TrimSpace(shaOutput), nil
+}
+
 func findLockfile(lockfileFlag string) (string, error) {
 	if lockfileFlag != "" {
 		if _, err := os.Stat(lockfileFlag); err == nil {
@@ -179,17 +207,11 @@ func findLockfile(lockfileFlag string) (string, error) {
 	// Auto-detect common lockfiles
 	patterns := []string{
 		"package-lock.json",
-		"package.json", // will use deps from package.json
 		"pnpm-lock.yaml",
 		"yarn.lock",
 		"requirements.txt",
-		"Pipfile.lock",
-		"pyproject.lock",
 		"uv.lock",
 		"go.sum",
-		"Cargo.lock",
-		"Gemfile.lock",
-		"composer.lock",
 	}
 
 	cwd, err := os.Getwd()

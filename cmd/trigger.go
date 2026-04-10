@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -18,8 +19,8 @@ func TriggerCmd() *cobra.Command {
 	var all bool
 
 	cmd := &cobra.Command{
-		Use:     "trigger",
-		Short:   "Trigger Dependabot scans on repositories",
+		Use:   "trigger",
+		Short: "Trigger Dependabot scans on repositories",
 		Aliases: []string{"t"},
 		Long: `Trigger Dependabot to scan repositories for security vulnerabilities.
 
@@ -112,21 +113,20 @@ func triggerRepo(repo string) error {
 	}
 	owner, name := parts[0], parts[1]
 
-	// Get default branch
-	defaultBranch := "main"
-	branchOutput, err := gh.Run("api", fmt.Sprintf("repos/%s/%s", owner, name), "-q", ".default_branch")
-	if err == nil {
-		defaultBranch = strings.TrimSpace(branchOutput)
+	// Get default branch and actual SHA from GitHub API
+	defaultBranch, sha, err := getRepoState(owner, name)
+	if err != nil {
+		return fmt.Errorf("get repo state: %w", err)
 	}
 
-	// Create minimal snapshot to trigger scan
+	// Build minimal snapshot with real SHA
 	snapshot := map[string]interface{}{
 		"version": 0,
-		"sha":     "0000000000000000000000000000000000000000", // placeholder
+		"sha":     sha,
 		"ref":     fmt.Sprintf("refs/heads/%s", defaultBranch),
 		"job": map[string]string{
-			"correlator": fmt.Sprintf("gh-dependabot-trigger-%d", 0),
-			"id":         "trigger",
+			"correlator": fmt.Sprintf("gh-dependabot-trigger-%d", os.Getpid()),
+			"id":        fmt.Sprintf("%d", os.Getpid()),
 		},
 		"detector": map[string]string{
 			"name":    "gh-dependabot-trigger",
@@ -145,17 +145,19 @@ func triggerRepo(repo string) error {
 		},
 	}
 
-	payload, _ := json.Marshal(snapshot)
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		return fmt.Errorf("marshal snapshot: %w", err)
+	}
 
-	// Use direct curl since gh api doesn't handle complex JSON well
-	// Use gh api with stdin
-	cmd := exec.Command("gh", "api", "-X", "POST",
+	// Use gh api --input for proper JSON handling
+	apiCmd := exec.Command("gh", "api", "-X", "POST",
 		fmt.Sprintf("repos/%s/%s/dependency-graph/snapshots", owner, name),
 		"--input", "-",
 	)
-	cmd.Stdin = bytes.NewReader(payload)
+	apiCmd.Stdin = bytes.NewReader(payload)
 
-	output, err := cmd.CombinedOutput()
+	output, err := apiCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("api call failed: %w\n%s", err, string(output))
 	}

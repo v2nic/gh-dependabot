@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-
-if ! command -v go &>/dev/null; then
-  echo "go must be installed to use this gh extension"
-  exit 1
-fi
-
-cd "$(dirname "$(realpath "$0")")" >/dev/null && exec go run . "$@"
