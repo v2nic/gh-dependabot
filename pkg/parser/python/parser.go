@@ -1,14 +1,16 @@
-package parser
+package python
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/einride/gh-dependabot/pkg/parser/types"
 )
 
 // ParseUVLock parses uv.lock files (Python)
-func ParseUVLock(path string) (map[string]Dependency, error) {
+func ParseUVLock(path string) (map[string]types.Dependency, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read uv.lock: %w", err)
@@ -22,10 +24,10 @@ func ParseUVLock(path string) (map[string]Dependency, error) {
 		} `json:"packages"`
 	}
 	if err := json.Unmarshal(data, &lockfile); err == nil && len(lockfile.Packages) > 0 {
-		deps := make(map[string]Dependency)
+		deps := make(map[string]types.Dependency)
 		for _, pkg := range lockfile.Packages {
 			if pkg.Name != "" && pkg.Version != "" {
-				deps[pkg.Name+"@"+pkg.Version] = Dependency{
+				deps[pkg.Name+"@"+pkg.Version] = types.Dependency{
 					PackageURL:   fmt.Sprintf("pkg:/python/%s@%s", pkg.Name, pkg.Version),
 					Relationship: "direct",
 				}
@@ -35,7 +37,7 @@ func ParseUVLock(path string) (map[string]Dependency, error) {
 	}
 
 	// Fallback to TOML-like format
-	deps := make(map[string]Dependency)
+	deps := make(map[string]types.Dependency)
 	lines := strings.Split(string(data), "\n")
 	var currentPkg string
 
@@ -55,7 +57,7 @@ func ParseUVLock(path string) (map[string]Dependency, error) {
 			if len(parts) == 2 {
 				version := strings.Trim(parts[1], `" `)
 				if version != "" && currentPkg != "" {
-					deps[currentPkg+"@"+version] = Dependency{
+					deps[currentPkg+"@"+version] = types.Dependency{
 						PackageURL:   fmt.Sprintf("pkg:/python/%s@%s", currentPkg, version),
 						Relationship: "direct",
 					}

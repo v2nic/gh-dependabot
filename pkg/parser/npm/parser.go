@@ -1,4 +1,4 @@
-package parser
+package npm
 
 import (
 	"encoding/json"
@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/einride/gh-dependabot/pkg/parser/types"
 )
 
 // ParsePackageLock parses npm package-lock.json or package.json files
-func ParsePackageLock(path string) (map[string]Dependency, error) {
+func ParsePackageLock(path string) (map[string]types.Dependency, error) {
 	base := strings.ToLower(filepath.Base(path))
 
 	if base == "package.json" {
@@ -18,7 +20,7 @@ func ParsePackageLock(path string) (map[string]Dependency, error) {
 	return parsePackageLockJSON(path)
 }
 
-func parsePackageLockJSON(path string) (map[string]Dependency, error) {
+func parsePackageLockJSON(path string) (map[string]types.Dependency, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
@@ -33,7 +35,7 @@ func parsePackageLockJSON(path string) (map[string]Dependency, error) {
 		return nil, fmt.Errorf("parse package-lock.json: %w", err)
 	}
 
-	deps := make(map[string]Dependency)
+	deps := make(map[string]types.Dependency)
 	for name, pkg := range lockfile.Packages {
 		if name == "" || name == "node_modules" {
 			continue
@@ -54,7 +56,7 @@ func parsePackageLockJSON(path string) (map[string]Dependency, error) {
 		}
 
 		version = cleanVersion(version)
-		deps[pkgName+"@"+version] = Dependency{
+		deps[pkgName+"@"+version] = types.Dependency{
 			PackageURL:   fmt.Sprintf("pkg:/npm/%s@%s", pkgName, version),
 			Relationship: "direct",
 			Scope:        "runtime",
@@ -64,7 +66,7 @@ func parsePackageLockJSON(path string) (map[string]Dependency, error) {
 	return deps, nil
 }
 
-func parsePackageJSON(path string) (map[string]Dependency, error) {
+func parsePackageJSON(path string) (map[string]types.Dependency, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read package.json: %w", err)
@@ -78,12 +80,12 @@ func parsePackageJSON(path string) (map[string]Dependency, error) {
 		return nil, fmt.Errorf("parse package.json: %w", err)
 	}
 
-	deps := make(map[string]Dependency)
+	deps := make(map[string]types.Dependency)
 	for _, pkg := range pkgs {
 		if pkg.Name == "" || pkg.Version == "" {
 			continue
 		}
-		deps[pkg.Name+"@"+pkg.Version] = Dependency{
+		deps[pkg.Name+"@"+pkg.Version] = types.Dependency{
 			PackageURL:   fmt.Sprintf("pkg:/npm/%s@%s", pkg.Name, pkg.Version),
 			Relationship: "direct",
 		}
@@ -92,13 +94,13 @@ func parsePackageJSON(path string) (map[string]Dependency, error) {
 }
 
 // ParseYarnLock parses yarn.lock and pnpm-lock.yaml files
-func ParseYarnLock(path string) (map[string]Dependency, error) {
+func ParseYarnLock(path string) (map[string]types.Dependency, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read yarn.lock: %w", err)
 	}
 
-	deps := make(map[string]Dependency)
+	deps := make(map[string]types.Dependency)
 	lines := strings.Split(string(data), "\n")
 
 	for _, line := range lines {
@@ -107,7 +109,7 @@ func ParseYarnLock(path string) (map[string]Dependency, error) {
 			for _, word := range words {
 				if strings.Contains(word, "@") && !strings.HasPrefix(word, "@@") {
 					if pkg, ver := splitAtVersion(word); pkg != "" && ver != "" {
-						deps[pkg+"@"+ver] = Dependency{
+						deps[pkg+"@"+ver] = types.Dependency{
 							PackageURL:   fmt.Sprintf("pkg:/npm/%s@%s", pkg, ver),
 							Relationship: "direct",
 						}
@@ -121,7 +123,7 @@ func ParseYarnLock(path string) (map[string]Dependency, error) {
 }
 
 // =============================================================================
-// Utility functions (shared by npm parsers)
+// Utility functions
 // =============================================================================
 
 func splitAtVersion(s string) (name, version string) {
@@ -150,7 +152,7 @@ func extractPackageName(nodeModulesPath string) string {
 			return parts[0] + "/" + parts[1]
 		}
 	}
-	parts := strings.SplitN(path, "/", 1)
+	parts := strings.SplitN(path, "/", 2)
 	return parts[0]
 }
 

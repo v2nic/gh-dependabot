@@ -1,24 +1,31 @@
-package parser
+package pip
 
 import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/einride/gh-dependabot/pkg/parser/types"
 )
 
 // ParseRequirementsTxt parses Python requirements.txt files
-func ParseRequirementsTxt(path string) (map[string]Dependency, error) {
+func ParseRequirementsTxt(path string) (map[string]types.Dependency, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read requirements.txt: %w", err)
 	}
 
-	deps := make(map[string]Dependency)
+	deps := make(map[string]types.Dependency)
 	lines := strings.Split(string(data), "\n")
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "-") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Skip flags like -r, -e, --index-url, etc.
+		if strings.HasPrefix(line, "-") {
 			continue
 		}
 
@@ -27,7 +34,7 @@ func ParseRequirementsTxt(path string) (map[string]Dependency, error) {
 			continue
 		}
 
-		deps[name+"@"+version] = Dependency{
+		deps[name+"@"+version] = types.Dependency{
 			PackageURL:   fmt.Sprintf("pkg:/pypi/%s@%s", name, version),
 			Relationship: "direct",
 		}
