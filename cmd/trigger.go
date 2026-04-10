@@ -19,8 +19,8 @@ func TriggerCmd() *cobra.Command {
 	var all bool
 
 	cmd := &cobra.Command{
-		Use:   "trigger",
-		Short: "Trigger Dependabot scans on repositories",
+		Use:     "trigger",
+		Short:   "Trigger Dependabot scans on repositories",
 		Aliases: []string{"t"},
 		Long: `Trigger Dependabot to scan repositories for security vulnerabilities.
 
@@ -126,7 +126,7 @@ func triggerRepo(repo string) error {
 		"ref":     fmt.Sprintf("refs/heads/%s", defaultBranch),
 		"job": map[string]string{
 			"correlator": fmt.Sprintf("gh-dependabot-trigger-%d", os.Getpid()),
-			"id":        fmt.Sprintf("%d", os.Getpid()),
+			"id":         fmt.Sprintf("%d", os.Getpid()),
 		},
 		"detector": map[string]string{
 			"name":    "gh-dependabot-trigger",

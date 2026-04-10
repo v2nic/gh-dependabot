@@ -178,7 +178,7 @@ func getRepoState(owner, name string) (branch, sha string, err error) {
 
 	var info struct {
 		DefaultBranch string `json:"defaultBranch"`
-		SHA            string `json:"sha"`
+		SHA           string `json:"sha"`
 	}
 	if err := json.Unmarshal([]byte(output), &info); err != nil {
 		return "main", "", err
