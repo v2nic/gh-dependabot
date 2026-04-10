@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 	"sort"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,47 +18,15 @@ func main() {
 		Transport: gh.NewGraphQLRoundTripper(),
 	})
 
-	// Register subcommands
-	rootCmd := &cobra.Command{
-		Use:   "gh dependabot",
-		Short: "Manage Dependabot PRs.",
-		Long:  "GitHub CLI extension for interacting with Dependabot PRs and triggering security updates.",
-	}
-
-	rootCmd.AddCommand(cmd.SubmitCmd())
-	rootCmd.AddCommand(cmd.TriggerCmd())
-
-	// If no arguments, show TUI (existing behavior)
-	if len(os.Args) == 1 {
-		runTUI(client)
-		return
-	}
-
-	// Check if running submit or trigger command
-	if len(os.Args) >= 2 {
-		switch os.Args[1] {
-		case "submit", "trigger":
-			if err := rootCmd.Execute(); err != nil {
-				log.Fatalln(err)
-			}
-			return
-		}
-	}
-
-	// Default to TUI
-	runTUI(client)
-}
-
-func runTUI(client *githubv4.Client) {
 	var org string
 	var team string
 	var securityFilter bool
 
-	cmd := &cobra.Command{
+	runCmd := cobra.Command{
 		Use:     "gh dependabot",
 		Short:   "Manage Dependabot PRs.",
 		Example: "gh dependabot --org einride",
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(runCmd *cobra.Command, _ []string) error {
 			log.Println("Resolving current user...")
 			username, err := gh.Run("api", "graphql", "-f", "query={viewer{login}}", "--jq", ".data.viewer.login")
 			if err != nil {
@@ -92,7 +59,7 @@ func runTUI(client *githubv4.Client) {
 			}
 			if securityFilter {
 				log.Printf("Matching pull requests to security alerts...")
-				pullRequests, err = filterSecurityPullRequests(cmd.Context(), client, &pullRequests)
+				pullRequests, err = filterSecurityPullRequests(runCmd.Context(), client, &pullRequests)
 				if err != nil {
 					return err
 				}
@@ -104,12 +71,13 @@ func runTUI(client *githubv4.Client) {
 			return err
 		},
 	}
-	cmd.Flags().StringVarP(&org, "org", "o", "", "organization to query (e.g. einride)")
-	cmd.Flags().StringVarP(&team, "team", "t", "", "team to query (e.g. einride/team-transport-execution)")
-	cmd.Flags().
-		BoolVarP(&securityFilter, "only-security", "s", false, "show only pull requests that relate to security alerts")
 
-	if err := cmd.Execute(); err != nil {
+	runCmd.AddCommand(cmd.SubmitCmd(), cmd.TriggerCmd())
+	runCmd.Flags().StringVarP(&org, "org", "o", "", "organization to query (e.g. einride)")
+	runCmd.Flags().StringVarP(&team, "team", "t", "", "team to query (e.g. einride/team-transport-execution)")
+	runCmd.Flags().BoolVarP(&securityFilter, "only-security", "s", false, "show only pull requests that relate to security alerts")
+
+	if err := runCmd.Execute(); err != nil {
 		log.Fatalln(err)
 	}
 }
