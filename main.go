@@ -17,16 +17,14 @@ func main() {
 	client := githubv4.NewClient(&http.Client{
 		Transport: gh.NewGraphQLRoundTripper(),
 	})
-
 	var org string
 	var team string
 	var securityFilter bool
-
-	runCmd := cobra.Command{
+	c := cobra.Command{
 		Use:     "gh dependabot",
 		Short:   "Manage Dependabot PRs.",
 		Example: "gh dependabot --org einride",
-		RunE: func(runCmd *cobra.Command, _ []string) error {
+		RunE: func(c *cobra.Command, _ []string) error {
 			log.Println("Resolving current user...")
 			username, err := gh.Run("api", "graphql", "-f", "query={viewer{login}}", "--jq", ".data.viewer.login")
 			if err != nil {
@@ -59,7 +57,7 @@ func main() {
 			}
 			if securityFilter {
 				log.Printf("Matching pull requests to security alerts...")
-				pullRequests, err = filterSecurityPullRequests(runCmd.Context(), client, &pullRequests)
+				pullRequests, err = filterSecurityPullRequests(c.Context(), client, &pullRequests)
 				if err != nil {
 					return err
 				}
@@ -71,13 +69,12 @@ func main() {
 			return err
 		},
 	}
-
-	runCmd.AddCommand(cmd.SubmitCmd(), cmd.TriggerCmd())
-	runCmd.Flags().StringVarP(&org, "org", "o", "", "organization to query (e.g. einride)")
-	runCmd.Flags().StringVarP(&team, "team", "t", "", "team to query (e.g. einride/team-transport-execution)")
-	runCmd.Flags().BoolVarP(&securityFilter, "only-security", "s", false, "show only pull requests that relate to security alerts")
-
-	if err := runCmd.Execute(); err != nil {
+	c.AddCommand(cmd.SubmitCmd(), cmd.TriggerCmd())
+	c.Flags().StringVarP(&org, "org", "o", "", "organization to query (e.g. einride)")
+	c.Flags().StringVarP(&team, "team", "t", "", "team to query (e.g. einride/team-transport-execution)")
+	c.Flags().
+		BoolVarP(&securityFilter, "only-security", "s", false, "show only pull requests that relate to security alerts")
+	if err := c.Execute(); err != nil {
 		log.Fatalln(err)
 	}
 }
